@@ -135,6 +135,9 @@ Route::prefix('admin')->middleware(['auth:sanctum', 'company:telcovantage'])->gr
     Route::put('support/tickets/{supportTicket}/assign', [Api\SupportTicketController::class, 'assign']);
     Route::put('support/tickets/{supportTicket}/status', [Api\SupportTicketController::class, 'updateStatus']);
     Route::post('support/tickets/{supportTicket}/reply', [Api\SupportTicketController::class, 'reply']);
+    Route::get('support/tickets/{supportTicket}/session', [Api\SupportTicketSessionController::class, 'show']);
+    Route::post('support/tickets/{supportTicket}/session', [Api\SupportTicketSessionController::class, 'startOrJoin']);
+    Route::put('support/ticket-sessions/{supportTicketSession}/end', [Api\SupportTicketSessionController::class, 'end']);
 
     // PSGC
     Route::get('locations/regions',   [Api\PsgcController::class, 'regions']);
@@ -291,6 +294,9 @@ Route::prefix('skycable')->middleware(['auth:sanctum', 'company:skycable'])->gro
     Route::get('support/tickets',               [Api\SupportTicketController::class, 'index']);
     Route::get('support/tickets/{supportTicket}',[Api\SupportTicketController::class, 'show']);
     Route::post('support/tickets/{supportTicket}/reply',[Api\SupportTicketController::class, 'reply']);
+    Route::get('support/tickets/{supportTicket}/session', [Api\SupportTicketSessionController::class, 'show']);
+    Route::post('support/tickets/{supportTicket}/session', [Api\SupportTicketSessionController::class, 'startOrJoin']);
+    Route::put('support/ticket-sessions/{supportTicketSession}/end', [Api\SupportTicketSessionController::class, 'end']);
 });
 
 // ── Globe ─────────────────────────────────────────────────────────────────────
@@ -359,6 +365,9 @@ Route::prefix('globe')->middleware(['auth:sanctum', 'company:globe'])->group(fun
     Route::get('support/tickets',                [Api\SupportTicketController::class, 'index']);
     Route::get('support/tickets/{supportTicket}',[Api\SupportTicketController::class, 'show']);
     Route::post('support/tickets/{supportTicket}/reply',[Api\SupportTicketController::class, 'reply']);
+    Route::get('support/tickets/{supportTicket}/session', [Api\SupportTicketSessionController::class, 'show']);
+    Route::post('support/tickets/{supportTicket}/session', [Api\SupportTicketSessionController::class, 'startOrJoin']);
+    Route::put('support/ticket-sessions/{supportTicketSession}/end', [Api\SupportTicketSessionController::class, 'end']);
 });
 
 // ── Meralco ───────────────────────────────────────────────────────────────────
@@ -392,4 +401,7 @@ Route::prefix('meralco')->middleware(['auth:sanctum', 'company:meralco'])->group
     Route::get('support/tickets',                [Api\SupportTicketController::class, 'index']);
     Route::get('support/tickets/{supportTicket}',[Api\SupportTicketController::class, 'show']);
     Route::post('support/tickets/{supportTicket}/reply',[Api\SupportTicketController::class, 'reply']);
+    Route::get('support/tickets/{supportTicket}/session', [Api\SupportTicketSessionController::class, 'show']);
+    Route::post('support/tickets/{supportTicket}/session', [Api\SupportTicketSessionController::class, 'startOrJoin']);
+    Route::put('support/ticket-sessions/{supportTicketSession}/end', [Api\SupportTicketSessionController::class, 'end']);
 });

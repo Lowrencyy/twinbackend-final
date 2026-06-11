@@ -185,7 +185,7 @@ class TeardownController extends Controller
                         'pole_id'        => $poleId,
                         'area_id'        => $span?->node?->area_id,
                         'node_id'        => $span?->node_id,
-                        'pole_code'      => $activePole?->pole_code ?? 'unknown',
+                        'pole_code'      => $rawPoleCode !== '' ? $rawPoleCode : ($activePole?->pole_code ?? 'unknown'),
                         'image_type'     => $typeSlug,
                         'file_path'      => $path,
                         'inventory_type' => 'skycable',
@@ -421,8 +421,10 @@ class TeardownController extends Controller
         $dFromPole   = $directSpan?->fromPole?->pole;
         $dToPole     = $directSpan?->toPole?->pole;
         $dSpanId     = $directSpan?->id ?? 'unknown';
+        $requestedFromPoleCode = trim((string) $request->input('from_pole_code', $dFromPole?->pole_code ?? 'unknown'));
+        $requestedToPoleCode   = trim((string) $request->input('to_pole_code', $dToPole?->pole_code ?? 'unknown'));
 
-        $report = DB::transaction(function () use ($request, $user, $dAreaName, $dNodeName, $dFromPole, $dToPole, $dSpanId, $directSpan) {
+        $report = DB::transaction(function () use ($request, $user, $dAreaName, $dNodeName, $dFromPole, $dToPole, $dSpanId, $directSpan, $requestedFromPoleCode, $requestedToPoleCode) {
             $report = SkycableTeardownReport::create([
                 'local_id'           => $request->input('local_id') ?: null,
                 'span_id'            => $request->input('pole_span_id'),
@@ -462,7 +464,8 @@ class TeardownController extends Controller
                 $isBunching = $field === 'bunching';
                 $isToPole   = str_starts_with($field, 'to_');
                 $activePole = $isToPole ? $dToPole : $dFromPole;
-                $poleCode   = $this->sanitizePath($activePole?->pole_code ?? 'unknown');
+                $rawPoleCode = $isToPole ? $requestedToPoleCode : $requestedFromPoleCode;
+                $poleCode   = $this->sanitizePath($rawPoleCode !== '' ? $rawPoleCode : ($activePole?->pole_code ?? 'unknown'));
                 $poleId     = $activePole?->id ?? 0;
 
                 if ($isBunching) {
@@ -492,7 +495,7 @@ class TeardownController extends Controller
                     'pole_id'        => $poleId,
                     'area_id'        => $directSpan?->node?->area_id,
                     'node_id'        => $directSpan?->node_id,
-                    'pole_code'      => $activePole?->pole_code ?? 'unknown',
+                    'pole_code'      => $rawPoleCode !== '' ? $rawPoleCode : ($activePole?->pole_code ?? 'unknown'),
                     'image_type'     => $typeSlug,
                     'file_path'      => $path,
                     'inventory_type' => 'skycable',

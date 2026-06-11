@@ -225,13 +225,18 @@ POST /api/v1/asbuilt/import
 Content-Type: application/json
 ```
 
-Use this endpoint for both:
+Use this endpoint to import a **new** node and its poles/spans.
 
-1. Existing node import  
-2. Manual node create-or-update import  
+If the `node_id` does not exist yet inside the selected `area_id`, the backend creates the node and imports its poles and spans.  
+If the `node_id` **already exists** inside the selected `area_id`, the import is **rejected with `422`** — re-uploading the same node_id is not allowed. To import again you must change the `node_id` first.
 
-If the `node_id` does not exist yet inside the selected `area_id`, the backend creates the node automatically.  
-If the `node_id` already exists inside the selected `area_id`, the backend updates that node.
+```json
+{
+  "message": "Import failed. This node id (LP-1123) already exists on the backend. Please double check properly to avoid node id duplication."
+}
+```
+
+> The duplicate check is **case-insensitive** and scoped to the `area_id` — `lp-1123` and `LP-1123` in the same area count as the same node. The same node_id may still be used in a *different* area.
 
 ---
 
@@ -268,10 +273,10 @@ If the `node_id` already exists inside the selected `area_id`, the backend updat
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `from_pole_code` | string | ✅ | `pole_code` of the starting pole |
-| `to_pole_code` | string | ✅ | `pole_code` of the ending pole. Must differ from `from_pole_code` |
-| `from_pole_index` | integer | ✅ **Required** | `pole_index` of the starting pole — must match a `pole_index` value in the `poles` array |
-| `to_pole_index` | integer | ✅ **Required** | `pole_index` of the ending pole — must match a `pole_index` value in the `poles` array |
+| `from_pole_code` | string | ✅ | `pole_code` of the starting pole. **Descriptive only — ignored for connecting the span.** |
+| `to_pole_code` | string | ✅ | `pole_code` of the ending pole. **Descriptive only — ignored for connecting the span.** |
+| `from_pole_index` | integer | ✅ **Required** | `pole_index` of the starting pole — **the sole key** used to connect the span. Must match a `pole_index` in the `poles` array |
+| `to_pole_index` | integer | ✅ **Required** | `pole_index` of the ending pole — **the sole key** used to connect the span. Must match a `pole_index` in the `poles` array |
 | `strand_length` | decimal | ✅ **Required** | Length in meters. e.g. `50.5` |
 | `number_of_runs` | integer | ✅ **Required** | Minimum 1. `expected_cable = strand_length × number_of_runs` — required collection by lineman |
 | `components` | object | ❌ | Equipment counts. All default to `0` if omitted |
@@ -301,21 +306,21 @@ spans:
   from_pole_index: 2 → to_pole_index: 3   ✅ Pole 2 to Pole 3
 ```
 
-This also solves duplicate `pole_code` cases — two poles can share the same code but have different indexes:
+This also solves duplicate `pole_code` cases — two poles can share the same code but have different indexes. **Each `pole_index` is stored as its own pole record with its own coordinates**, so two `NPT` poles render as two distinct pins and the span between them connects correctly:
 
 ```
 poles:
-  pole_index: 1  →  NPT  (lat 14.5397, lng 121.1092)
-  pole_index: 2  →  NPT  (lat 14.5401, lng 121.1098)  ← same code, different location!
+  pole_index: 1  →  NPT  (lat 14.5397, lng 121.1092)   ← own record, own coords
+  pole_index: 2  →  NPT  (lat 14.5401, lng 121.1098)   ← same code, different record + location
   pole_index: 3  →  PL-002
 
 spans:
-  from_pole_index: 1 → to_pole_index: 2   ✅ correct — index is unambiguous
+  from_pole_index: 1 → to_pole_index: 2   ✅ correct — index is unambiguous (NPT → NPT works)
   from_pole_index: 2 → to_pole_index: 3   ✅ correct
 ```
 
 > **Missing `pole_index` = `422` error. The import will not proceed.**  
-> There is no fallback matching. `pole_index` is the only way the backend connects spans to poles.
+> There is no fallback matching. `pole_index` is the only way the backend connects spans to poles — `pole_code` is never used to resolve a span, so duplicate names are fully supported.
 
 ---
 
@@ -698,7 +703,7 @@ const manualNode = {
 
 > Manual node creation uses the same `POST /asbuilt/import` endpoint.  
 > If the `node_id` does not exist yet inside the selected `area_id`, the backend creates the node automatically.  
-> If the `node_id` already exists inside the selected `area_id`, the backend updates that node.
+> If the `node_id` already exists inside the selected `area_id`, the import is **rejected with `422`** — change the `node_id` before posting again.
 
 ---
 
@@ -1166,7 +1171,10 @@ Proposed addition to `GET /asbuilt/node/{nodeId}` span response:
 |-------------|---------|
 | `201` | Import completed (may include `errors[]` for skipped spans) |
 | `422` | Validation failed — missing required fields or invalid values |
+| `422` | **Duplicate node_id** — a node with this `node_id` already exists in the `area_id`. Change the `node_id` and retry. Message: `"Import failed. This node id (…) already exists on the backend. Please double check properly to avoid node id duplication."` |
 | `404` | `area_id` not found |
+
+Both `/asbuilt/import` and `/asbuilt/import-by-sequence` reject duplicate `node_id`s the same way.
 
 When a span's `from_pole_index` or `to_pole_index` does not match any pole in the `poles` list, that span is **silently skipped** and recorded in `data.errors[]`. The rest of the import still succeeds with a `201`.
 

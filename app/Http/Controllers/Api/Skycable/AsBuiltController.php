@@ -75,15 +75,24 @@ class AsBuiltController extends Controller
             'spans.*.components.ps_housing'  => 'nullable|integer|min:0',
         ]);
 
-        // ── Find or create node by node_id string ────────────────────────────
-        $node = SkycableNode::firstOrCreate(
-            ['node_id' => $request->node_id, 'area_id' => $request->area_id],
-            [
-                'name'        => $request->node_name,
-                'status'      => 'pending',
-                'source_file' => 'asbuilt',
-            ]
-        );
+        // ── Reject duplicate node_id within the same area (case-insensitive) ──
+        $nodeId = trim($request->node_id);
+        if (SkycableNode::where('area_id', $request->area_id)
+                ->whereRaw('UPPER(node_id) = ?', [strtoupper($nodeId)])
+                ->exists()) {
+            return response()->json([
+                'message' => "Import failed. This node id ({$nodeId}) already exists on the backend. Please double check properly to avoid node id duplication.",
+            ], 422);
+        }
+
+        // ── Create node by node_id string ────────────────────────────────────
+        $node = SkycableNode::create([
+            'node_id'     => $nodeId,
+            'area_id'     => $request->area_id,
+            'name'        => $request->node_name,
+            'status'      => 'pending',
+            'source_file' => 'asbuilt',
+        ]);
 
         $result = DB::transaction(function () use ($request, $node) {
 
@@ -93,180 +102,26 @@ class AsBuiltController extends Controller
             $updatedSpans  = [];
             $errors        = [];
 
-            $poleCodeToEntries  = [];
-            $usedSkycablePoleIds = [];
             $importedCoordinates = [];
 
-            // ── 1. Upsert Poles ──────────────────────────────────────────────
+            // pole_index (as string) → skycable_pole id. pole_index is the sole key
+            // connecting spans to poles, so two poles can share a pole_code (e.g. "NPT")
+            // and still be addressed unambiguously.
+            $indexMap = [];
 
-            // Pre-count pole_code occurrences to detect indexed names (NPT-1, NPT-2…)
-            // pole_label = base name before the trailing "-N" suffix
-            // label_index = the N suffix if present, null if the name is unique
-            $poleCodeCounts = array_count_values(
-                array_map(fn($p) => strtoupper(trim($p['pole_code'] ?? '')), $request->poles)
-            );
-
+            // ── 1. Upsert Poles (keyed strictly by pole_index) ────────────────
             foreach ($request->poles as $idx => $poleData) {
-                $code = strtoupper(trim($poleData['pole_code']));
-                if (! $code) {
-                    $errors[] = "poles[{$idx}]: pole_code is empty";
-                    continue;
-                }
-
-                // Derive pole_label and label_index from the code.
-                // Pattern: "NPT-2" → label="NPT", index=2
-                //           "NPT"   → label="NPT", index=null (unique)
-                //           "TY-001"→ label="TY-001", index=null (not an indexed duplicate)
-                $poleLabel = $code;
-                $labelIndex = null;
-                if (preg_match('/^(.+)-(\d+)$/', $code, $m)) {
-                    $baseCode = $m[1];
-                    $suffix   = (int) $m[2];
-                    // Only treat as indexed if the base name alone also appears
-                    // OR other "-N" variants appear (i.e. it looks intentionally indexed)
-                    $siblingPattern = $baseCode . '-';
-                    $hasSiblings = collect(array_keys($poleCodeCounts))
-                        ->contains(fn($c) => str_starts_with($c, $siblingPattern) && $c !== $code);
-                    if ($hasSiblings || isset($poleCodeCounts[$baseCode])) {
-                        $poleLabel  = $baseCode;
-                        $labelIndex = $suffix;
-                    }
-                }
-
-                $lat       = $this->normalizeCoordinate($poleData['latitude'] ?? null);
-                $lng       = $this->normalizeCoordinate($poleData['longitude'] ?? null);
-                $poleIndex = isset($poleData['pole_index']) ? (int) $poleData['pole_index'] : null;
-
-                // Match by pole_index first — two poles can share the same pole_code (e.g. "NPT")
-                // but each has a distinct pole_index. Matching by code alone would find the wrong pole.
-                $skycablePole = null;
-                if ($poleIndex !== null) {
-                    $skycablePole = SkycablePole::with('pole')
-                        ->where('node_id', $node->id)
-                        ->where('pole_index', $poleIndex)
-                        ->whereNotIn('id', $usedSkycablePoleIds ?: [0])
-                        ->first();
-                }
-                if (! $skycablePole) {
-                    $skycablePole = $this->matchExistingNodePole(
-                        $node->id, $code, $lat, $lng, $usedSkycablePoleIds
-                    );
-                }
-
-                if ($skycablePole) {
-                    $pole = $this->preparePoleForNodeImport($skycablePole, $code, $lat, $lng);
-
-                    // Update label/index if not yet set
-                    if (! $pole->pole_label) {
-                        $pole->update(['pole_label' => $poleLabel, 'label_index' => $labelIndex]);
-                    }
-
-                    $spUpdate = [];
-                    if ($skycablePole->pole_id !== $pole->id) $spUpdate['pole_id'] = $pole->id;
-                    if ($poleIndex !== null) $spUpdate['pole_index'] = $poleIndex;
-
-                    if ($spUpdate) $skycablePole->update($spUpdate);
-
-                    $updatedPoles[] = $code;
-                } else {
-                    $pole = Pole::create([
-                        'pole_code'   => $code,
-                        'pole_label'  => $poleLabel,
-                        'label_index' => $labelIndex,
-                        'lat'         => $lat,
-                        'lng'         => $lng,
-                    ]);
-
-                    $skycablePole = SkycablePole::create([
-                        'node_id'    => $node->id,
-                        'pole_id'    => $pole->id,
-                        'pole_index' => $poleIndex,
-                    ]);
-
-                    $createdPoles[] = $code;
-                }
-
-                $skycablePole->setRelation('pole', $pole);
-                $usedSkycablePoleIds[] = $skycablePole->id;
-
-                if ($lat !== null && $lng !== null) {
-                    $importedCoordinates[] = ['lat' => $lat, 'lng' => $lng];
-                }
-
-                $poleCodeToEntries[$code][] = [
-                    'id'           => $skycablePole->id,
-                    'latitude'     => $lat,
-                    'longitude'    => $lng,
-                    'source_index' => $idx,           // 0-based array position (fallback)
-                    'pole_index'   => $poleIndex,     // explicit pole_index from payload (preferred)
-                ];
+                $this->upsertNodePole(
+                    $node, $poleData, $idx,
+                    $indexMap, $createdPoles, $updatedPoles, $errors, $importedCoordinates
+                );
             }
 
-            // ── 2. Upsert Spans + Summaries ───────────────────────────────────
+            // ── 2. Upsert Spans + Summaries (resolved by pole_index) ──────────
             foreach (($request->spans ?? []) as $idx => $spanData) {
-                $fromCode = strtoupper(trim($spanData['from_pole_code']));
-                $toCode   = strtoupper(trim($spanData['to_pole_code']));
-
-                $fromEntry = $this->resolveImportedPoleEntry($poleCodeToEntries, $fromCode, $spanData, 'from');
-                $toEntry   = $this->resolveImportedPoleEntry($poleCodeToEntries, $toCode,   $spanData, 'to');
-
-                $fromSkId = $fromEntry['id'] ?? null;
-                $toSkId   = $toEntry['id']   ?? null;
-
-                if (! $fromSkId) {
-                    $errors[] = "spans[{$idx}]: from_pole_code '{$fromCode}' not found in poles list";
-                    continue;
-                }
-                if (! $toSkId) {
-                    $errors[] = "spans[{$idx}]: to_pole_code '{$toCode}' not found in poles list";
-                    continue;
-                }
-                if ($fromSkId === $toSkId) {
-                    $errors[] = "spans[{$idx}]: from and to poles must be different";
-                    continue;
-                }
-
-                $strandLength  = $spanData['strand_length']  ?? null;
-                $numberOfRuns  = $spanData['number_of_runs'] ?? 1;
-                $expectedCable = $strandLength ? round($strandLength * $numberOfRuns, 2) : 0;
-
-                $span = SkycableSpan::firstOrCreate(
-                    [
-                        'node_id'      => $node->id,
-                        'from_pole_id' => $fromSkId,
-                        'to_pole_id'   => $toSkId,
-                    ],
-                    [
-                        'strand_length'  => $strandLength,
-                        'number_of_runs' => $numberOfRuns,
-                        'span_code'      => $this->generateSpanCode($node),
-                        'status'         => 'pending',
-                    ]
-                );
-
-                if ($span->wasRecentlyCreated) {
-                    $createdSpans[] = $span->span_code ?? "{$fromCode} → {$toCode}";
-                } else {
-                    $span->update([
-                        'strand_length'  => $strandLength  ?? $span->strand_length,
-                        'number_of_runs' => $numberOfRuns  ?? $span->number_of_runs,
-                    ]);
-                    $updatedSpans[] = $span->span_code ?? "{$fromCode} → {$toCode}";
-                }
-
-                $comp = $spanData['components'] ?? [];
-                SkycableSpanSummary::updateOrCreate(
-                    ['span_id' => $span->id],
-                    [
-                        'node_id'            => $node->id,
-                        'expected_cable'     => $expectedCable,
-                        'expected_node'      => $comp['node']        ?? 0,
-                        'expected_amplifier' => $comp['amplifier']   ?? 0,
-                        'expected_extender'  => $comp['extender']    ?? 0,
-                        'expected_tsc'       => $comp['tsc']         ?? 0,
-                        'expected_powersupply' => $comp['powersupply'] ?? 0,
-                        'expected_ps_housing'  => $comp['ps_housing']  ?? 0,
-                    ]
+                $this->upsertNodeSpan(
+                    $node, $spanData, $idx,
+                    $indexMap, $createdSpans, $updatedSpans, $errors
                 );
             }
 
@@ -525,9 +380,19 @@ class AsBuiltController extends Controller
             'spans.*.components.ps_housing' => 'nullable|integer|min:0',
         ]);
 
-        // ── Resolve / create node ─────────────────────────────────────────────
-        $node = SkycableNode::firstOrNew([
-            'node_id' => strtoupper(trim($request->node_id)),
+        // ── Reject duplicate node_id within the same area (case-insensitive) ──
+        $nodeId = strtoupper(trim($request->node_id));
+        if (SkycableNode::where('area_id', $request->area_id)
+                ->whereRaw('UPPER(node_id) = ?', [$nodeId])
+                ->exists()) {
+            return response()->json([
+                'message' => "Import failed. This node id ({$request->node_id}) already exists on the backend. Please double check properly to avoid node id duplication.",
+            ], 422);
+        }
+
+        // ── Create node ───────────────────────────────────────────────────────
+        $node = SkycableNode::newModelInstance([
+            'node_id' => $nodeId,
             'area_id' => $request->area_id,
         ]);
         $node->fill(array_filter([
@@ -551,148 +416,24 @@ class AsBuiltController extends Controller
             $updatedSpans  = [];
             $errors        = [];
 
-            // pole_index → skycable_pole id  (e.g. "NPT-1", "CV8-001")
-            // sequence is reserved for lineman teardown order — AsBuilt never writes it.
+            // pole_index (as string, e.g. "NPT-1", "CV8-001") → skycable_pole id.
+            // pole_index is the sole key connecting spans to poles.
             $indexMap = [];
+            $importedCoordinates = [];
 
-            // ── 1. Upsert Poles ───────────────────────────────────────────────
+            // ── 1. Upsert Poles (keyed strictly by pole_index) ────────────────
             foreach ($request->poles as $idx => $poleData) {
-                $poleIndex = isset($poleData['pole_index']) ? strtoupper(trim($poleData['pole_index'])) : null;
-                $code      = strtoupper(trim($poleData['pole_code']));
-                $lat       = $this->normalizeCoordinate($poleData['lat'] ?? $poleData['latitude'] ?? null);
-                $lng       = $this->normalizeCoordinate($poleData['lng'] ?? $poleData['longitude'] ?? null);
-
-                if (! $poleIndex) {
-                    $errors[] = "poles[{$idx}]: pole_index is required";
-                    continue;
-                }
-                if (! $code) {
-                    $errors[] = "poles[{$idx}]: pole_code is empty";
-                    continue;
-                }
-
-                // Prevent duplicates within this import batch
-                if (isset($indexMap[$poleIndex])) {
-                    $errors[] = "poles[{$idx}]: duplicate pole_index '{$poleIndex}'";
-                    continue;
-                }
-                // Find existing pole by pole_index first, then pole_code
-                $skycablePole = SkycablePole::with('pole')
-                    ->where('node_id', $node->id)
-                    ->where('pole_index', $poleIndex)
-                    ->first();
-
-                if (! $skycablePole) {
-                    $skycablePole = SkycablePole::with('pole')
-                        ->where('node_id', $node->id)
-                        ->whereHas('pole', fn ($q) => $q->where('pole_code', $code))
-                        ->first();
-                }
-
-                if ($skycablePole) {
-                    $pole = $skycablePole->pole;
-                    if ($lat !== null && $lng !== null) {
-                        $pole->update(['lat' => $lat, 'lng' => $lng]);
-                    }
-                    if ($poleIndex !== null) {
-                        $skycablePole->update(['pole_index' => $poleIndex]);
-                    }
-                    $updatedPoles[] = $code;
-                } else {
-                    $pole = Pole::firstOrCreate(
-                        ['pole_code' => $code],
-                        ['lat' => $lat, 'lng' => $lng]
-                    );
-                    if ($lat !== null && $lng !== null && ($pole->lat !== $lat || $pole->lng !== $lng)) {
-                        $pole->update(['lat' => $lat, 'lng' => $lng]);
-                    }
-                    $skycablePole = SkycablePole::create([
-                        'node_id'    => $node->id,
-                        'pole_id'    => $pole->id,
-                        'pole_index' => $poleIndex,
-                    ]);
-                    $createdPoles[] = $code;
-                }
-
-                $indexMap[$poleIndex] = $skycablePole->id;
+                $this->upsertNodePole(
+                    $node, $poleData, $idx,
+                    $indexMap, $createdPoles, $updatedPoles, $errors, $importedCoordinates
+                );
             }
 
-            // ── 2. Upsert Spans ───────────────────────────────────────────────
+            // ── 2. Upsert Spans + Summaries (resolved by pole_index) ──────────
             foreach (($request->spans ?? []) as $idx => $spanData) {
-                // Resolve from-pole: prefer pole_index, fall back to sequence
-                $fromKey = $spanData['from_pole_index'] ?? null;
-                if ($fromKey) $fromKey = strtoupper(trim($fromKey));
-                if (! $fromKey && isset($spanData['from_sequence'])) {
-                    $fromKey = (int) $spanData['from_sequence'];
-                }
-
-                // Resolve to-pole: prefer pole_index, fall back to sequence
-                $toKey = $spanData['to_pole_index'] ?? null;
-                if ($toKey) $toKey = strtoupper(trim($toKey));
-                if (! $toKey && isset($spanData['to_sequence'])) {
-                    $toKey = (int) $spanData['to_sequence'];
-                }
-
-                if ($fromKey === null) {
-                    $errors[] = "spans[{$idx}]: from_pole_index is required";
-                    continue;
-                }
-                if ($toKey === null) {
-                    $errors[] = "spans[{$idx}]: to_pole_index is required";
-                    continue;
-                }
-
-                if (! isset($indexMap[$fromKey])) {
-                    $errors[] = "spans[{$idx}]: from '{$fromKey}' not found in poles list";
-                    continue;
-                }
-                if (! isset($indexMap[$toKey])) {
-                    $errors[] = "spans[{$idx}]: to '{$toKey}' not found in poles list";
-                    continue;
-                }
-                if ($indexMap[$fromKey] === $indexMap[$toKey]) {
-                    $errors[] = "spans[{$idx}]: from and to poles must be different";
-                    continue;
-                }
-
-                $fromSkId = $indexMap[$fromKey];
-                $toSkId   = $indexMap[$toKey];
-                $strandLength  = isset($spanData['strand_length'])  ? (float) $spanData['strand_length']  : null;
-                $numberOfRuns  = isset($spanData['number_of_runs']) ? max(1, (int) $spanData['number_of_runs']) : 1;
-                $expectedCable = $strandLength !== null ? round($strandLength * $numberOfRuns, 4) : null;
-                $components    = $spanData['components'] ?? [];
-
-                $span = SkycableSpan::where('node_id', $node->id)
-                    ->where('from_pole_id', $fromSkId)
-                    ->where('to_pole_id',   $toSkId)
-                    ->first();
-
-                if ($span) {
-                    $span->update(['node_id' => $node->id]);
-                    $updatedSpans[] = $span->span_code ?? "{$fromKey}→{$toKey}";
-                } else {
-                    $span = SkycableSpan::create([
-                        'node_id'      => $node->id,
-                        'from_pole_id' => $fromSkId,
-                        'to_pole_id'   => $toSkId,
-                        'span_code'    => $this->generateSpanCode($node),
-                    ]);
-                    $createdSpans[] = $span->span_code ?? "{$fromKey}→{$toKey}";
-                }
-
-                SkycableSpanSummary::updateOrCreate(
-                    ['span_id' => $span->id],
-                    [
-                        'strand_length'  => $strandLength,
-                        'number_of_runs' => $numberOfRuns,
-                        'expected_cable' => $expectedCable,
-                        'node_count'     => $components['node']        ?? 0,
-                        'amplifier'      => $components['amplifier']   ?? 0,
-                        'extender'       => $components['extender']    ?? 0,
-                        'tsc'            => $components['tsc']         ?? 0,
-                        'powersupply'    => $components['powersupply'] ?? 0,
-                        'ps_housing'     => $components['ps_housing']  ?? 0,
-                    ]
+                $this->upsertNodeSpan(
+                    $node, $spanData, $idx,
+                    $indexMap, $createdSpans, $updatedSpans, $errors
                 );
             }
 
@@ -815,61 +556,167 @@ class AsBuiltController extends Controller
         return round((float) $value, 7);
     }
 
-    private function matchExistingNodePole(int $nodeId, string $code, ?float $lat, ?float $lng, array $usedSkycablePoleIds): ?SkycablePole
-    {
-        // Canvas (sitemap reader) has no GPS — X/Y only. No GPS coordinate matching.
-        // This is a fallback for re-imports where pole_index already exists on the record.
-        return SkycablePole::with('pole')
-            ->where('node_id', $nodeId)
-            ->whereNotIn('id', $usedSkycablePoleIds ?: [0])
-            ->whereHas('pole', fn ($q) => $q->where('pole_code', $code))
+    /**
+     * Upsert one pole into a node, keyed strictly by (node_id, pole_index).
+     *
+     * pole_index is normalized to an uppercase string so the integer payload of
+     * /import and the string payload of /import-by-sequence map identically. Each
+     * distinct pole_index gets its OWN poles row (own lat/lng) — two poles that share
+     * a pole_code (e.g. "NPT") therefore render as two distinct pins and the span
+     * between them connects correctly. pole_code is stored but never used to match.
+     *
+     * Records the resulting skycable_pole id in $indexMap keyed by pole_index.
+     */
+    private function upsertNodePole(
+        SkycableNode $node,
+        array $poleData,
+        int $idx,
+        array &$indexMap,
+        array &$createdPoles,
+        array &$updatedPoles,
+        array &$errors,
+        array &$importedCoordinates
+    ): void {
+        $poleIndex = isset($poleData['pole_index']) ? strtoupper(trim((string) $poleData['pole_index'])) : '';
+        $code      = strtoupper(trim((string) ($poleData['pole_code'] ?? '')));
+        $lat       = $this->normalizeCoordinate($poleData['lat'] ?? $poleData['latitude'] ?? null);
+        $lng       = $this->normalizeCoordinate($poleData['lng'] ?? $poleData['longitude'] ?? null);
+
+        if ($poleIndex === '') {
+            $errors[] = "poles[{$idx}]: pole_index is required";
+            return;
+        }
+        if ($code === '') {
+            $errors[] = "poles[{$idx}]: pole_code is empty";
+            return;
+        }
+        // Prevent duplicate pole_index within this import batch
+        if (isset($indexMap[$poleIndex])) {
+            $errors[] = "poles[{$idx}]: duplicate pole_index '{$poleIndex}'";
+            return;
+        }
+
+        // Re-import match is by (node_id, pole_index) only — never by pole_code.
+        $skycablePole = SkycablePole::with('pole')
+            ->where('node_id', $node->id)
+            ->where('pole_index', $poleIndex)
             ->first();
-    }
 
-    private function preparePoleForNodeImport(SkycablePole $skycablePole, string $code, ?float $lat, ?float $lng): Pole
-    {
-        $pole = $skycablePole->pole;
-
-        if (! $pole) {
-            return Pole::create(['pole_code' => $code, 'lat' => $lat, 'lng' => $lng]);
+        if ($skycablePole) {
+            $pole = $skycablePole->pole;
+            if (! $pole) {
+                $pole = Pole::create(['pole_code' => $code, 'lat' => $lat, 'lng' => $lng]);
+                $skycablePole->update(['pole_id' => $pole->id]);
+            } else {
+                $updates = [];
+                if ($pole->pole_code !== $code) $updates['pole_code'] = $code;
+                if ($lat !== null && (float) $pole->lat !== $lat) $updates['lat'] = $lat;
+                if ($lng !== null && (float) $pole->lng !== $lng) $updates['lng'] = $lng;
+                if ($updates) $pole->update($updates);
+            }
+            $updatedPoles[] = $code;
+        } else {
+            // Each pole_index gets its own poles row — no firstOrCreate by pole_code.
+            $pole = Pole::create(['pole_code' => $code, 'lat' => $lat, 'lng' => $lng]);
+            $skycablePole = SkycablePole::create([
+                'node_id'    => $node->id,
+                'pole_id'    => $pole->id,
+                'pole_index' => $poleIndex,
+            ]);
+            $createdPoles[] = $code;
         }
 
-        $isShared = SkycablePole::where('pole_id', $pole->id)
-            ->where('id', '!=', $skycablePole->id)
-            ->exists();
-
-        if ($isShared) {
-            return Pole::create(['pole_code' => $code, 'lat' => $lat, 'lng' => $lng]);
+        if ($lat !== null && $lng !== null) {
+            $importedCoordinates[] = ['lat' => $lat, 'lng' => $lng];
         }
 
-        $updates = [];
-        if ($pole->pole_code !== $code) $updates['pole_code'] = $code;
-        if ($lat !== null && ! $this->coordinatesEqual($pole->lat, $lat)) $updates['lat'] = $lat;
-        if ($lng !== null && ! $this->coordinatesEqual($pole->lng, $lng)) $updates['lng'] = $lng;
-
-        if (! empty($updates)) $pole->update($updates);
-
-        return $pole->fresh();
+        $indexMap[$poleIndex] = $skycablePole->id;
     }
 
-    private function coordinatesEqual(mixed $stored, float $incoming): bool
-    {
-        if ($stored === null || $stored === '') return false;
-        return abs(round((float) $stored, 7) - $incoming) < 0.0000001;
-    }
+    /**
+     * Upsert one span + its summary, resolving both endpoints strictly by pole_index
+     * via $indexMap. from_pole_code / to_pole_code in the payload are descriptive only
+     * and are never used to look up poles.
+     */
+    private function upsertNodeSpan(
+        SkycableNode $node,
+        array $spanData,
+        int $idx,
+        array $indexMap,
+        array &$createdSpans,
+        array &$updatedSpans,
+        array &$errors
+    ): void {
+        $fromKey = isset($spanData['from_pole_index']) ? strtoupper(trim((string) $spanData['from_pole_index'])) : '';
+        $toKey   = isset($spanData['to_pole_index'])   ? strtoupper(trim((string) $spanData['to_pole_index']))   : '';
 
-    private function resolveImportedPoleEntry(array $poleCodeToEntries, string $code, array $spanData, string $side): ?array
-    {
-        $entries = $poleCodeToEntries[$code] ?? [];
-        if (count($entries) === 0) return null;
+        if ($fromKey === '') {
+            $errors[] = "spans[{$idx}]: from_pole_index is required";
+            return;
+        }
+        if ($toKey === '') {
+            $errors[] = "spans[{$idx}]: to_pole_index is required";
+            return;
+        }
 
-        // pole_index is the only resolution key. Canvas (sitemap reader) has no GPS — X/Y only.
-        // No GPS fallback, no array-position fallback. No index match = span is skipped.
-        $sourceIndex = $spanData["{$side}_pole_index"] ?? null;
-        if ($sourceIndex === null) return null;
+        $fromSkId = $indexMap[$fromKey] ?? null;
+        $toSkId   = $indexMap[$toKey]   ?? null;
 
-        $idx = (int) $sourceIndex;
-        return collect($entries)->first(fn ($e) => $e['pole_index'] !== null && $e['pole_index'] === $idx);
+        if (! $fromSkId) {
+            $errors[] = "spans[{$idx}]: from_pole_index '{$fromKey}' not found in poles list";
+            return;
+        }
+        if (! $toSkId) {
+            $errors[] = "spans[{$idx}]: to_pole_index '{$toKey}' not found in poles list";
+            return;
+        }
+        if ($fromSkId === $toSkId) {
+            $errors[] = "spans[{$idx}]: from and to poles must be different";
+            return;
+        }
+
+        $strandLength  = isset($spanData['strand_length'])  ? (float) $spanData['strand_length'] : null;
+        $numberOfRuns  = isset($spanData['number_of_runs']) ? max(1, (int) $spanData['number_of_runs']) : 1;
+        $expectedCable = $strandLength !== null ? round($strandLength * $numberOfRuns, 2) : 0;
+        $comp          = $spanData['components'] ?? [];
+
+        $span = SkycableSpan::firstOrCreate(
+            [
+                'node_id'      => $node->id,
+                'from_pole_id' => $fromSkId,
+                'to_pole_id'   => $toSkId,
+            ],
+            [
+                'strand_length'  => $strandLength,
+                'number_of_runs' => $numberOfRuns,
+                'span_code'      => $this->generateSpanCode($node),
+                'status'         => 'pending',
+            ]
+        );
+
+        if ($span->wasRecentlyCreated) {
+            $createdSpans[] = $span->span_code ?? "{$fromKey}→{$toKey}";
+        } else {
+            $span->update([
+                'strand_length'  => $strandLength  ?? $span->strand_length,
+                'number_of_runs' => $numberOfRuns  ?? $span->number_of_runs,
+            ]);
+            $updatedSpans[] = $span->span_code ?? "{$fromKey}→{$toKey}";
+        }
+
+        SkycableSpanSummary::updateOrCreate(
+            ['span_id' => $span->id],
+            [
+                'node_id'              => $node->id,
+                'expected_cable'       => $expectedCable,
+                'expected_node'        => $comp['node']        ?? 0,
+                'expected_amplifier'   => $comp['amplifier']   ?? 0,
+                'expected_extender'    => $comp['extender']    ?? 0,
+                'expected_tsc'         => $comp['tsc']         ?? 0,
+                'expected_powersupply' => $comp['powersupply'] ?? 0,
+                'expected_ps_housing'  => $comp['ps_housing']  ?? 0,
+            ]
+        );
     }
 
     private function clearSkycableMapCaches(): void

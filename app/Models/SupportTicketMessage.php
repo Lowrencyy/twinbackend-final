@@ -6,8 +6,9 @@ use Illuminate\Database\Eloquent\Model;
 
 class SupportTicketMessage extends Model
 {
-    protected $fillable = ['support_ticket_id', 'sender_id', 'message'];
+    protected $fillable = ['ticket_id', 'sender_id', 'message'];
 
-    public function ticket() { return $this->belongsTo(SupportTicket::class); }
+    public function ticket() { return $this->belongsTo(SupportTicket::class, 'ticket_id'); }
     public function sender() { return $this->belongsTo(User::class, 'sender_id'); }
+    public function attachments() { return $this->hasMany(SupportTicketAttachment::class, 'message_id'); }
 }

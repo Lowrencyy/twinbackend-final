@@ -1,0 +1,21 @@
+# ── Laravel-in-subdirectory front controller (Hostinger: docroot = project root) ──
+# Use this ONLY if you cannot set the domain's document root to /public in hPanel.
+# It forwards every request into Laravel's public/ folder and blocks sensitive files.
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Block dotfiles and known sensitive paths outright (.env, .git, etc.)
+    RewriteRule (^|/)\.(?!well-known) - [F,L]
+    RewriteRule ^(\.env|composer\.(json|lock)|package\.json|artisan)$ - [F,L]
+    RewriteRule ^(vendor|bootstrap|config|database|routes|storage|app|resources|tests)(/|$) - [F,L]
+
+    # Send everything else into public/ (where Laravel's own .htaccess routes it to index.php)
+    RewriteCond %{REQUEST_URI} !^/public/
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+
+# Belt-and-suspenders: deny direct access to the env file even if rewrite is off
+<Files .env>
+    Require all denied
+</Files>

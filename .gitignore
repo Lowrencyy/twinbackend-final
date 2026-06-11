@@ -24,3 +24,12 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Web-based deploy/debug runners — must never be committed or left on the live server
+_deploy.php
+clear-cache.php
+public/clear-cache.php
+migrate.php
+# IDE autocomplete stubs (regenerate with: php artisan ide-helper:generate)
+_ide_helper.php
+_ide_helper_models.php
