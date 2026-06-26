@@ -51,9 +51,14 @@ class TeardownImageController extends Controller
             $fileName     = "bunching.jpg";
         } else {
             // {area}/{node}/{pole_code}/{pole_code}_before.jpg  (or after / poletag)
-            $typeSlug   = $imageType === 'pole_tag' ? 'poletag' : $imageType;
-            $folderPath = "{$areaName}/{$nodeName}/{$poleCode}";
-            $fileName   = "{$poleCode}_{$typeSlug}.jpg";
+            // Poles still using the default "NPT" code aren't unique per node,
+            // so suffix with the pole ID to avoid two NPT poles overwriting
+            // each other's photos. Renaming the pole away from "NPT" later
+            // naturally moves future uploads to a folder named after the new code.
+            $typeSlug  = $imageType === 'pole_tag' ? 'poletag' : $imageType;
+            $slugName  = strcasecmp($poleCode, 'NPT') === 0 ? "{$poleCode}({$poleId})" : $poleCode;
+            $folderPath = "{$areaName}/{$nodeName}/{$slugName}";
+            $fileName   = "{$slugName}_{$typeSlug}.jpg";
         }
 
         $fullPath = "{$folderPath}/{$fileName}";

@@ -410,25 +410,31 @@
         <div class="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4 stagger-group">
           <div class="stagger-item glass-card rounded-2xl p-6 text-center text-slate-900">
             <div class="mb-3 text-[#0A5C3B] text-xl"><i class="fa-solid fa-shield-heart"></i></div>
-            <div class="font-bold text-base">Integrity</div>
+            <div class="font-bold text-base">Innovation</div>
             <p class="mt-2 text-xs leading-6 text-slate-500">We act with honesty, accountability, and professionalism in every engagement.</p>
           </div>
 
           <div class="stagger-item glass-card rounded-2xl p-6 text-center text-slate-900">
             <div class="mb-3 text-[#2563EB] text-xl"><i class="fa-solid fa-lightbulb"></i></div>
-            <div class="font-bold text-base">Innovation</div>
+            <div class="font-bold text-base">Customer Centricity</div>
             <p class="mt-2 text-xs leading-6 text-slate-500">We embrace smarter technologies and better ways of solving field and network challenges.</p>
           </div>
 
           <div class="stagger-item glass-card rounded-2xl p-6 text-center text-slate-900">
             <div class="mb-3 text-[#0A5C3B] text-xl"><i class="fa-solid fa-award"></i></div>
-            <div class="font-bold text-base">Excellence</div>
+            <div class="font-bold text-base">Sustainability</div>
             <p class="mt-2 text-xs leading-6 text-slate-500">We aim for high-quality execution, reliable service, and continuous improvement.</p>
           </div>
 
           <div class="stagger-item glass-card rounded-2xl p-6 text-center text-slate-900">
             <div class="mb-3 text-[#2563EB] text-xl"><i class="fa-solid fa-leaf"></i></div>
-            <div class="font-bold text-base">Sustainability</div>
+            <div class="font-bold text-base">Operational Efficiency</div>
+            <p class="mt-2 text-xs leading-6 text-slate-500">We support long-term growth through efficient operations and responsible solutions.</p>
+          </div>
+          
+           <div class="stagger-item glass-card rounded-2xl p-6 text-center text-slate-900">
+            <div class="mb-3 text-[#2563EB] text-xl"><i class="fa-solid fa-leaf"></i></div>
+            <div class="font-bold text-base">Respect</div>
             <p class="mt-2 text-xs leading-6 text-slate-500">We support long-term growth through efficient operations and responsible solutions.</p>
           </div>
         </div>
@@ -547,31 +553,31 @@
           <article class="stagger-item glass-card rounded-2xl p-6 text-center text-slate-900">
             <div class="mb-3 text-[#0A5C3B] text-xl"><i class="fa-solid fa-tower-broadcast"></i></div>
             <div class="font-bold text-base mb-2">Fixed And Wireless Network Rollout</div>
-            <p class="text-xs leading-6 text-slate-500">Delivering efficient fixed and wireless network rollout through streamlined planning, deployment, and integration aligned with industry standards.</p>
+            <p class="text-xs leading-6 text-slate-500">We provide end-to-end deployment support for both fixed and wireless networks. By driving precise engineering planning, on-site installation oversight, and seamless system integration, we help operators accelerate time-to-market while ensuring structural reliability and network readiness.</p>
           </article>
 
           <article class="stagger-item glass-card rounded-2xl p-6 text-center text-slate-900">
             <div class="mb-3 text-[#2563EB] text-xl"><i class="fa-solid fa-screwdriver-wrench"></i></div>
             <div class="font-bold text-base mb-2">Network And Site Modernization</div>
-            <p class="text-xs leading-6 text-slate-500">Decommissioning and dismantling of legacy systems and sites, upgrading telecom infrastructures by safely sunsetting outdated systems.</p>
+            <p class="text-xs leading-6 text-slate-500">We specialize in supporting customers as they transition from aging, high-maintenance hardware to next-generation technology. Our teams manage and execute the safe decommissioning of legacy systems, and supervise the transition to modern infrastructure sustainably and with minimal network downtime.</p>
           </article>
 
           <article class="stagger-item glass-card rounded-2xl p-6 text-center text-slate-900">
             <div class="mb-3 text-[#0A5C3B] text-xl"><i class="fa-solid fa-recycle"></i></div>
             <div class="font-bold text-base mb-2">Legacy Asset Harvesting</div>
-            <p class="text-xs leading-6 text-slate-500">Recovering value from retired telecom assets for revenue and funding innovation.</p>
+            <p class="text-xs leading-6 text-slate-500">As a core part of our modernization support, we manage the systematic recovery of decommissioned assets. Our team utilizes advanced, AI-based applications to rapidly identify, catalog, and assess the condition of legacy equipment on-site. This intelligence-driven approach minimizes errors, speeds up technical dismantling, and allows operators to cut costs through precise asset reuse or responsible recycling.</p>
           </article>
 
           <article class="stagger-item glass-card rounded-2xl p-6 text-center text-slate-900">
             <div class="mb-3 text-[#2563EB] text-xl"><i class="fa-solid fa-chart-line"></i></div>
             <div class="font-bold text-base mb-2">Radio Network Planning</div>
-            <p class="text-xs leading-6 text-slate-500">Ensuring telecom sites meet industry standards through comprehensive evaluation and optimization of network performance, coverage, and reliability.</p>
+            <p class="text-xs leading-6 text-slate-500">We provide expert engineering services to ensure your radio access network (RAN) meets strict industry standards. Through advanced technologies performance evaluations, and continuous network optimization, we help operators eliminate coverage gaps and ensure seamless connectivity.</p>
           </article>
 
           <article class="stagger-item glass-card rounded-2xl p-6 text-center text-slate-900">
             <div class="mb-3 text-[#0A5C3B] text-xl"><i class="fa-solid fa-clipboard-list"></i></div>
             <div class="font-bold text-base mb-2">Network Site Technical Audits</div>
-            <p class="text-xs leading-6 text-slate-500">Ensuring telecom sites meet industry standards with comprehensive technical evaluation and site assessment.</p>
+            <p class="text-xs leading-6 text-slate-500">We conduct independent, deep-dive technical audits to give operators complete visibility into their physical infrastructure. Leveraging our team's capability in using specialized AI applications, we automate and enhance the analysis of site imagery, structural data, and equipment configurations. This results in faster turnaround times, highly accurate safety and compliance reporting, and actionable insights to optimize site longevity.</p>
           </article>
         </div>
       </div>

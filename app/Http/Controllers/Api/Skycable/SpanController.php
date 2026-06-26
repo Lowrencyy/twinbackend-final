@@ -96,15 +96,44 @@ class SpanController extends Controller
             'ps_housing'       => 'nullable|integer|min:0',
         ]);
 
-        $span = SkycableSpan::create([
-            'node_id'        => $data['node_id'],
-            'from_pole_id'   => $data['from_pole_id'],
-            'to_pole_id'     => $data['to_pole_id'],
-            'span_code'      => $data['span_code'] ?? null,
-            'strand_length'  => $data['strand_length'] ?? null,
-            'number_of_runs' => $data['number_of_runs'] ?? null,
-            'actual_cable'   => $data['actual_cable'] ?? null,
-        ]);
+        $activeDuplicate = SkycableSpan::where('from_pole_id', $data['from_pole_id'])
+            ->where('to_pole_id', $data['to_pole_id'])
+            ->first();
+        if ($activeDuplicate) {
+            return response()->json(['message' => 'A span between these two poles already exists.'], 422);
+        }
+
+        // skycable_spans has a unique(from_pole_id, to_pole_id) index that isn't soft-delete-aware,
+        // so a previously deleted span between this exact pair still occupies that slot — restore
+        // and reuse it instead of inserting, otherwise the insert throws a duplicate-key error.
+        $trashed = SkycableSpan::onlyTrashed()
+            ->where('from_pole_id', $data['from_pole_id'])
+            ->where('to_pole_id', $data['to_pole_id'])
+            ->first();
+
+        if ($trashed) {
+            $trashed->restore();
+            $span = $trashed;
+            $span->update([
+                'node_id'        => $data['node_id'],
+                'span_code'      => $data['span_code'] ?? null,
+                'strand_length'  => $data['strand_length'] ?? null,
+                'number_of_runs' => $data['number_of_runs'] ?? null,
+                'actual_cable'   => $data['actual_cable'] ?? null,
+                'status'         => 'pending',
+                'completed_at'   => null,
+            ]);
+        } else {
+            $span = SkycableSpan::create([
+                'node_id'        => $data['node_id'],
+                'from_pole_id'   => $data['from_pole_id'],
+                'to_pole_id'     => $data['to_pole_id'],
+                'span_code'      => $data['span_code'] ?? null,
+                'strand_length'  => $data['strand_length'] ?? null,
+                'number_of_runs' => $data['number_of_runs'] ?? null,
+                'actual_cable'   => $data['actual_cable'] ?? null,
+            ]);
+        }
 
         $this->syncComponents($span, $data);
 
@@ -129,6 +158,9 @@ class SpanController extends Controller
     public function update(Request $request, SkycableSpan $span)
     {
         $data = $request->validate([
+            'from_pole_id'     => 'sometimes|required|exists:skycable_poles,id|different:to_pole_id',
+            'to_pole_id'       => 'sometimes|required|exists:skycable_poles,id|different:from_pole_id',
+            'span_code'        => 'sometimes|nullable|string|max:100',
             'strand_length'    => 'sometimes|nullable|numeric|min:0',
             'number_of_runs'   => 'sometimes|nullable|integer|min:0',
             'actual_cable'     => 'sometimes|nullable|numeric|min:0',
@@ -143,8 +175,40 @@ class SpanController extends Controller
             'ps_housing'       => 'sometimes|nullable|integer|min:0',
         ]);
 
+        $nextFromPoleId = array_key_exists('from_pole_id', $data) ? $data['from_pole_id'] : $span->from_pole_id;
+        $nextToPoleId = array_key_exists('to_pole_id', $data) ? $data['to_pole_id'] : $span->to_pole_id;
+
+        if ($nextFromPoleId !== $span->from_pole_id || $nextToPoleId !== $span->to_pole_id) {
+            $activeDuplicate = SkycableSpan::where('id', '!=', $span->id)
+                ->where('from_pole_id', $nextFromPoleId)
+                ->where('to_pole_id', $nextToPoleId)
+                ->first();
+            if ($activeDuplicate) {
+                return response()->json(['message' => 'A span between these two poles already exists.'], 422);
+            }
+
+            $trashedDuplicate = SkycableSpan::onlyTrashed()
+                ->where('id', '!=', $span->id)
+                ->where('from_pole_id', $nextFromPoleId)
+                ->where('to_pole_id', $nextToPoleId)
+                ->first();
+            if ($trashedDuplicate) {
+                return response()->json(['message' => 'A deleted span between these two poles already exists. Restore that span instead of reusing the same pair.'], 422);
+            }
+        }
+
         $old = $span->toArray();
+        $affectedPoleIds = array_unique(array_filter([
+            $span->from_pole_id,
+            $span->to_pole_id,
+            $nextFromPoleId,
+            $nextToPoleId,
+        ]));
+
         $span->update([
+            'from_pole_id'   => $nextFromPoleId,
+            'to_pole_id'     => $nextToPoleId,
+            'span_code'      => array_key_exists('span_code', $data) ? $data['span_code'] : $span->span_code,
             'strand_length'  => $data['strand_length']  ?? $span->strand_length,
             'number_of_runs' => $data['number_of_runs'] ?? $span->number_of_runs,
             'actual_cable'   => $data['actual_cable']   ?? $span->actual_cable,
@@ -152,8 +216,9 @@ class SpanController extends Controller
         ]);
 
         $this->syncComponents($span, $data);
+        $poleChanges = $this->refreshPoleStatusesByIds($affectedPoleIds);
 
-        AuditLog::record('updated', $span, $old, $span->toArray());
+        AuditLog::record('updated', $span, $old, array_merge($span->toArray(), ['pole_status_changes' => $poleChanges]));
         \App\Services\CacheWarmer::spans($span->node_id);
 
         return response()->json($span->load(['fromPole.pole', 'toPole.pole', 'summary']));
@@ -234,6 +299,9 @@ class SpanController extends Controller
                 'pole_code' => $poleName,
                 'lat'       => null,
                 'lng'       => null,
+                // Same as PoleController::store() — this pole only ever comes from
+                // a lineman inserting it in the field via mobile, never AsBuilt import.
+                'is_manual' => true,
             ]);
 
             $nextSeq = SkycablePole::where('node_id', $span->node_id)->max('sequence') + 1;
@@ -364,7 +432,12 @@ class SpanController extends Controller
 
     private function refreshPoleStatuses(SkycableSpan $span): array
     {
-        $skycablePoleIds = array_filter([$span->from_pole_id, $span->to_pole_id]);
+        return $this->refreshPoleStatusesByIds([$span->from_pole_id, $span->to_pole_id]);
+    }
+
+    private function refreshPoleStatusesByIds(array $skycablePoleIds): array
+    {
+        $skycablePoleIds = array_values(array_unique(array_filter($skycablePoleIds)));
         $changed = [];
 
         foreach ($skycablePoleIds as $spId) {
@@ -375,28 +448,33 @@ class SpanController extends Controller
                 $q->where('from_pole_id', $spId)->orWhere('to_pole_id', $spId);
             })->whereNotIn('status', ['superseded', 'cancelled'])->get();
 
-            if ($allSpans->isEmpty()) continue;
-
-            $pendingSpans   = $allSpans->where('status', '!=', 'completed');
-            $completedSpans = $allSpans->where('status', 'completed');
-
-            $hasPending   = $pendingSpans->isNotEmpty();
-            $hasCompleted = $completedSpans->isNotEmpty();
-
-            $newStatus = match (true) {
-                $hasPending && !$hasCompleted => 'pending',
-                $hasPending &&  $hasCompleted => 'in_progress',
-                default                       => 'cleared',
-            };
-
             $poleCode = $skycablePole->pole->pole_code;
+            $previousStatus = $skycablePole->pole->skycable_status;
 
-            if ($skycablePole->pole->skycable_status !== $newStatus) {
+            if ($allSpans->isEmpty()) {
+                $newStatus = 'cleared';
+                $reason = 'no active spans remain';
+            } else {
+                $pendingSpans   = $allSpans->where('status', '!=', 'completed');
+                $completedSpans = $allSpans->where('status', 'completed');
+
+                $hasPending   = $pendingSpans->isNotEmpty();
+                $hasCompleted = $completedSpans->isNotEmpty();
+
+                $newStatus = match (true) {
+                    $hasPending && !$hasCompleted => 'pending',
+                    $hasPending &&  $hasCompleted => 'in_progress',
+                    default                       => 'cleared',
+                };
+                $reason = "has {$pendingSpans->count()} pending + {$completedSpans->count()} completed spans";
+            }
+
+            if ($previousStatus !== $newStatus) {
                 $skycablePole->pole->update(['skycable_status' => $newStatus]);
                 $changed[$poleCode] = [
-                    'from'   => $skycablePole->pole->skycable_status,
+                    'from'   => $previousStatus,
                     'to'     => $newStatus,
-                    'reason' => "has {$pendingSpans->count()} pending + {$completedSpans->count()} completed spans",
+                    'reason' => $reason,
                 ];
             }
         }

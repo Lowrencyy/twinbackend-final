@@ -418,8 +418,19 @@ class TeardownController extends Controller
         $directSpan     = SkycableSpan::with(['node.area', 'fromPole.pole', 'toPole.pole'])->find($request->input('pole_span_id'));
         $dAreaName   = $this->sanitizePath($directSpan?->node?->area?->name ?? 'Unknown_Area');
         $dNodeName   = $this->sanitizePath($directSpan?->node?->name ?? 'Unknown_Node');
-        $dFromPole   = $directSpan?->fromPole?->pole;
-        $dToPole     = $directSpan?->toPole?->pole;
+
+        // A lineman can physically walk a span starting from either end, so the
+        // mobile app's "from"/"to" pole_id doesn't always match the span's stored
+        // from_pole/to_pole. If the submitted from_pole_id is actually the span's
+        // to_pole, the submission is reversed — swap so GPS/photos/codes land on
+        // the correct physical pole instead of the one on "the other side".
+        $requestFromPoleId = (int) $request->input('from_pole_id');
+        $isReversed = $requestFromPoleId
+            && $directSpan?->toPole?->pole_id === $requestFromPoleId
+            && $directSpan?->fromPole?->pole_id !== $requestFromPoleId;
+
+        $dFromPole   = $isReversed ? $directSpan?->toPole?->pole   : $directSpan?->fromPole?->pole;
+        $dToPole     = $isReversed ? $directSpan?->fromPole?->pole : $directSpan?->toPole?->pole;
         $dSpanId     = $directSpan?->id ?? 'unknown';
         $requestedFromPoleCode = trim((string) $request->input('from_pole_code', $dFromPole?->pole_code ?? 'unknown'));
         $requestedToPoleCode   = trim((string) $request->input('to_pole_code', $dToPole?->pole_code ?? 'unknown'));
@@ -508,15 +519,17 @@ class TeardownController extends Controller
             Cache::forget('teardowns_index_15_p1');
             Cache::forget('teardowns_index_50_p1');
 
-            // Write captured GPS back to the physical pole records so they appear on the map
-            if ($request->from_pole_latitude && $directSpan->fromPole?->pole) {
-                $directSpan->fromPole->pole->update([
+            // Write captured GPS back to the physical pole records so they appear on the map.
+            // Uses $dFromPole/$dToPole (already corrected for a reversed submission above)
+            // instead of $directSpan->fromPole/toPole directly.
+            if ($request->from_pole_latitude && $dFromPole) {
+                $dFromPole->update([
                     'lat' => $request->from_pole_latitude,
                     'lng' => $request->from_pole_longitude,
                 ]);
             }
-            if ($request->to_pole_latitude && $directSpan->toPole?->pole) {
-                $directSpan->toPole->pole->update([
+            if ($request->to_pole_latitude && $dToPole) {
+                $dToPole->update([
                     'lat' => $request->to_pole_latitude,
                     'lng' => $request->to_pole_longitude,
                 ]);
@@ -530,12 +543,23 @@ class TeardownController extends Controller
                 'length_meters' => $request->input('expected_cable') ?? $directSpan->length_meters ?? 0,
             ]);
 
-            // Upsert into span_summaries — 1 row per span, all quantities in one place
+            // Upsert into span_summaries — 1 row per span, all quantities in one place.
+            // Carry the expected_* columns through explicitly (preferring whatever the
+            // mobile app submitted, falling back to the existing row) — otherwise this
+            // upsert silently drops them and the redline/vicinity reports lose the
+            // collectable-components badge for this span the moment it's torn down.
+            $existingSummary = $directSpan->summary;
             SkycableSpanSummary::updateOrCreate(
                 ['span_id' => $directSpan->id],
                 [
                     'node_id'              => $directSpan->node_id,
-                    'expected_cable'       => $request->input('expected_cable') ?? $directSpan->length_meters ?? 0,
+                    'expected_cable'       => $request->input('expected_cable') ?? $existingSummary?->expected_cable ?? $directSpan->length_meters ?? 0,
+                    'expected_node'        => $request->input('expected_node') ?? $existingSummary?->expected_node ?? 0,
+                    'expected_amplifier'   => $request->input('expected_amplifier') ?? $existingSummary?->expected_amplifier ?? 0,
+                    'expected_extender'    => $request->input('expected_extender') ?? $existingSummary?->expected_extender ?? 0,
+                    'expected_tsc'         => $request->input('expected_tsc') ?? $existingSummary?->expected_tsc ?? 0,
+                    'expected_powersupply' => $request->input('expected_powersupply') ?? $existingSummary?->expected_powersupply ?? 0,
+                    'expected_ps_housing'  => $request->input('expected_powersupply_housing') ?? $existingSummary?->expected_ps_housing ?? 0,
                     'actual_cable'         => $request->input('collected_cable') ?? $request->input('recovered_cable') ?? 0,
                     'actual_node'          => $request->input('nodes_collected') ?? $request->input('collected_node') ?? 0,
                     'actual_amplifier'     => $request->input('amplifiers_collected') ?? $request->input('collected_amplifier') ?? 0,

@@ -28,20 +28,39 @@ class LinemanLocationController extends Controller
             'city'        => 'nullable|string|max:255',
             'province'    => 'nullable|string|max:255',
             'region_name' => 'nullable|string|max:255',
+            'activity'    => 'nullable|string|max:100',
+            'pole_id'     => 'nullable|integer',
+            'pole_code'   => 'nullable|string|max:255',
+            'node_id'     => 'nullable|integer',
+            'node_name'   => 'nullable|string|max:255',
+            'area_id'     => 'nullable|integer',
         ]);
+
+        $update = [
+            'latitude'    => $data['latitude'],
+            'longitude'   => $data['longitude'],
+            'accuracy'    => $data['accuracy'] ?? null,
+            'barangay'    => $data['barangay'] ?? null,
+            'city'        => $data['city'] ?? null,
+            'province'    => $data['province'] ?? null,
+            'region_name' => $data['region_name'] ?? null,
+            'pinged_at'   => Carbon::now(),
+        ];
+
+        // Only overwrite activity context when explicitly provided so routine
+        // 10-minute pings don't clear the last known activity.
+        if (array_key_exists('activity', $data) && $data['activity'] !== null) {
+            $update['activity']  = $data['activity'];
+            $update['pole_id']   = $data['pole_id']   ?? null;
+            $update['pole_code'] = $data['pole_code']  ?? null;
+            $update['node_id']   = $data['node_id']   ?? null;
+            $update['node_name'] = $data['node_name'] ?? null;
+            $update['area_id']   = $data['area_id']   ?? null;
+        }
 
         LinemanLocation::updateOrCreate(
             ['user_id' => $request->user()->id],
-            [
-                'latitude'    => $data['latitude'],
-                'longitude'   => $data['longitude'],
-                'accuracy'    => $data['accuracy'] ?? null,
-                'barangay'    => $data['barangay'] ?? null,
-                'city'        => $data['city'] ?? null,
-                'province'    => $data['province'] ?? null,
-                'region_name' => $data['region_name'] ?? null,
-                'pinged_at'   => Carbon::now(),
-            ]
+            $update
         );
 
         $arrivedReceiptIds = $this->autoArrivePendingReceipts(
@@ -103,6 +122,13 @@ class LinemanLocationController extends Controller
                 // Subcontractor info
                 'subconId'   => $user->subcontractor_id,
                 'subconName' => $user->subcontractor?->name ?? $user->subcontractor_name ?? null,
+                // Activity context (set when lineman starts teardown work)
+                'activity'   => $loc->activity,
+                'poleId'     => $loc->pole_id,
+                'poleCode'   => $loc->pole_code,
+                'nodeId'     => $loc->node_id,
+                'nodeName'   => $loc->node_name,
+                'areaId'     => $loc->area_id,
             ];
         });
 

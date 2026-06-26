@@ -13,13 +13,14 @@ class Pole extends Model
     const STANDARD_SLOTS = ['C1', 'C2', 'C3', 'C4', 'C5', 'DA'];
 
     protected $fillable = [
-        'pole_code',
+        'pole_code', 'is_manual',
         'lat', 'lng',
         'skycable_status', 'skycable_cleared_at',
         'globe_status', 'globe_cleared_at',
     ];
 
     protected $casts = [
+        'is_manual'           => 'boolean',
         'skycable_cleared_at' => 'datetime',
         'globe_cleared_at'    => 'datetime',
     ];

@@ -16,6 +16,12 @@ class LinemanLocation extends Model
         'city',
         'province',
         'region_name',
+        'activity',
+        'pole_id',
+        'pole_code',
+        'node_id',
+        'node_name',
+        'area_id',
         'pinged_at',
     ];
 

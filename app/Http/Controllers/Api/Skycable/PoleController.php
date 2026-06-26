@@ -236,6 +236,10 @@ class PoleController extends Controller
             'barangay_code' => $data['barangay_code'] ?? null,
             'lat' => $data['lat'] ?? null,
             'lng' => $data['lng'] ?? null,
+            // This endpoint is only ever hit by the mobile "Add Pole" flow (AsBuilt
+            // import uses a separate path), so every pole created here is by
+            // definition one the lineman added in the field.
+            'is_manual' => true,
         ]);
 
         $maxSeq = SkycablePole::where('node_id', $data['node_id'])->max('sequence') ?? 0;
@@ -498,6 +502,15 @@ class PoleController extends Controller
 
         if (! empty($data['date_start']) && ! $skycablePole->date_start) {
             $update['date_start'] = $data['date_start'];
+
+            // First time this pole is started — assign the next teardown sequence
+            // server-side (authoritative, ignores whatever the client computed
+            // locally) so the redline/vicinity reports show the real order poles
+            // were started in this node, always beginning at 1.
+            $nextSeq = SkycablePole::where('node_id', $node->id)
+                ->whereNotNull('date_start')
+                ->max('sequence') ?? 0;
+            $update['sequence'] = $nextSeq + 1;
         }
 
         if (! empty($data['cleared_at'])) {
